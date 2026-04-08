@@ -6,39 +6,44 @@ import pandas as pd
 
 st.set_page_config(page_title="Routing Simulator", layout="wide")
 
-# 🎨 UI Header
+# 🎨 Header
 st.markdown("<h1 style='text-align:center; color:#4CAF50;'>📡 Routing Algorithm Simulator</h1>", unsafe_allow_html=True)
 st.markdown("---")
 
-# Sidebar Controls
+# Sidebar
 st.sidebar.header("⚙️ Controls")
 
 algorithm = st.sidebar.selectbox("Select Algorithm", ["Dijkstra", "Bellman-Ford"])
 source = st.sidebar.text_input("Source Node", "A")
-destination = st.sidebar.text_input("Destination Node", "F")
-
-delay = st.sidebar.slider("⏱ Animation Speed (seconds)", 0.1, 2.0, 1.0)
+destination = st.sidebar.text_input("Destination Node", "D")
+delay = st.sidebar.slider("⏱ Animation Speed", 0.1, 2.0, 1.0)
 
 st.sidebar.markdown("### 🌐 Custom Network Input")
+
+# ✅ Example with negative edge
 edge_input = st.sidebar.text_area(
     "Enter edges (format: A-B-1, B-C-2)",
-    "A-B-1, B-C-2, A-D-4, B-E-3, C-F-5, D-E-1, E-F-2"
+    "A-B-4, A-C-2, B-C--5, C-D-3"
 )
 
-# 🔧 Build Graph from User Input
-G = nx.Graph()
+# 🔧 Directed Graph
+G = nx.DiGraph()
 
+# 🧠 FIXED Parsing (handles negative values)
 try:
     edges = edge_input.split(",")
     for edge in edges:
-        u, v, w = edge.strip().split("-")
-        G.add_edge(u, v, weight=float(w))
-except:
-    st.error("❌ Invalid edge format")
+        parts = edge.strip().split("-", 2)   # 🔥 important fix
+        if len(parts) != 3:
+            raise ValueError(f"Invalid edge: {edge}")
+        u, v, w = parts[0], parts[1], float(parts[2])
+        G.add_edge(u, v, weight=w)
+except Exception as e:
+    st.error(f"❌ Invalid edge format: {e}")
 
-pos = nx.spring_layout(G)
+pos = nx.spring_layout(G, seed=42)
 
-# 📊 Graph Drawing Function
+# 🎨 Draw Graph
 def draw_graph(highlight_edges=None, highlight_node=None):
     plt.clf()
     edge_labels = nx.get_edge_attributes(G, 'weight')
@@ -56,19 +61,29 @@ def draw_graph(highlight_edges=None, highlight_node=None):
 
 # 🚀 Run Simulation
 if st.button("🚀 Run Simulation"):
-
     try:
-        # Algorithm execution
+        # ⚠️ Dijkstra warning
+        if algorithm == "Dijkstra":
+            for _, _, w in G.edges(data='weight'):
+                if w < 0:
+                    st.warning("⚠️ Dijkstra cannot handle negative weights!")
+
+        # 🔍 Run algorithm
         if algorithm == "Dijkstra":
             path = nx.dijkstra_path(G, source, destination)
             cost = nx.dijkstra_path_length(G, source, destination)
         else:
+            # 🔥 Negative cycle detection
+            if nx.negative_edge_cycle(G):
+                st.error("❌ Graph contains a negative cycle!")
+                st.stop()
+
             path = nx.bellman_ford_path(G, source, destination)
             cost = nx.bellman_ford_path_length(G, source, destination)
 
         hops = len(path) - 1
 
-        # Output
+        # ✅ Output
         st.success("✅ Path Found!")
         col1, col2, col3 = st.columns(3)
 
@@ -100,23 +115,34 @@ if st.button("🚀 Run Simulation"):
 
         st.success("🎯 Packet Reached Destination!")
 
-        # 📊 Comparison Chart
+        # 📊 Comparison
         st.subheader("📊 Algorithm Comparison")
 
-        d_path = nx.dijkstra_path(G, source, destination)
-        d_cost = nx.dijkstra_path_length(G, source, destination)
+        results = []
 
-        b_path = nx.bellman_ford_path(G, source, destination)
-        b_cost = nx.bellman_ford_path_length(G, source, destination)
+        # Dijkstra
+        try:
+            d_path = nx.dijkstra_path(G, source, destination)
+            d_cost = nx.dijkstra_path_length(G, source, destination)
+            results.append(["Dijkstra", d_cost, len(d_path) - 1])
+        except:
+            results.append(["Dijkstra", "Error", "Error"])
 
-        data = pd.DataFrame({
-            "Algorithm": ["Dijkstra", "Bellman-Ford"],
-            "Cost": [d_cost, b_cost],
-            "Hops": [len(d_path)-1, len(b_path)-1]
-        })
+        # Bellman-Ford
+        try:
+            if nx.negative_edge_cycle(G):
+                results.append(["Bellman-Ford", "Neg Cycle", "Neg Cycle"])
+            else:
+                b_path = nx.bellman_ford_path(G, source, destination)
+                b_cost = nx.bellman_ford_path_length(G, source, destination)
+                results.append(["Bellman-Ford", b_cost, len(b_path) - 1])
+        except:
+            results.append(["Bellman-Ford", "Error", "Error"])
 
-        st.table(data)
-        st.bar_chart(data.set_index("Algorithm"))
+        df = pd.DataFrame(results, columns=["Algorithm", "Cost", "Hops"])
 
-    except:
-        st.error("❌ Error: Check nodes or graph connectivity")
+        st.table(df)
+        st.bar_chart(df.set_index("Algorithm"))
+
+    except Exception as e:
+        st.error(f"❌ Error: {e}")
