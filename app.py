@@ -2,147 +2,141 @@ import streamlit as st
 import networkx as nx
 import matplotlib.pyplot as plt
 import time
-import pandas as pd
 
-st.set_page_config(page_title="Routing Simulator", layout="wide")
-
-# 🎨 Header
-st.markdown("<h1 style='text-align:center; color:#4CAF50;'>📡 Routing Algorithm Simulator</h1>", unsafe_allow_html=True)
-st.markdown("---")
+st.set_page_config(layout="wide")
+st.title("📡 Routing Algorithm Simulator")
 
 # Sidebar
-st.sidebar.header("⚙️ Controls")
-
 algorithm = st.sidebar.selectbox("Select Algorithm", ["Dijkstra", "Bellman-Ford"])
-source = st.sidebar.text_input("Source Node", "A")
-destination = st.sidebar.text_input("Destination Node", "D")
-delay = st.sidebar.slider("⏱ Animation Speed", 0.1, 2.0, 1.0)
+mode = st.sidebar.selectbox("Select Mode", ["Theoretical", "Practical"])
+speed = st.sidebar.slider("⏱️ Animation Speed", 0.1, 2.0, 1.0)
 
-st.sidebar.markdown("### 🌐 Custom Network Input")
-
-# ✅ Example with negative edge
+st.sidebar.markdown("---")
 edge_input = st.sidebar.text_area(
-    "Enter edges (format: A-B-1, B-C-2)",
-    "A-B-4, A-C-2, B-C--5, C-D-3"
+    "Add Edges (u v weight)",
+    "A B 5\nB C 2\nA C -2\nA D -5\nD C 2"
 )
 
-# 🔧 Directed Graph
+# Build Graph
 G = nx.DiGraph()
 
-# 🧠 FIXED Parsing (handles negative values)
-try:
-    edges = edge_input.split(",")
-    for edge in edges:
-        parts = edge.strip().split("-", 2)   # 🔥 important fix
-        if len(parts) != 3:
-            raise ValueError(f"Invalid edge: {edge}")
-        u, v, w = parts[0], parts[1], float(parts[2])
-        G.add_edge(u, v, weight=w)
-except Exception as e:
-    st.error(f"❌ Invalid edge format: {e}")
+for line in edge_input.split("\n"):
+    try:
+        u, v, w = line.split()
+        G.add_edge(u, v, weight=float(w))
+    except:
+        pass
 
-pos = nx.spring_layout(G, seed=42)
+# 🔥 Clean fixed layout (no overlap)
+pos = {
+    'A': (0, 1),
+    'B': (-1, 0),
+    'C': (1, 0),
+    'D': (0, -1)
+}
 
-# 🎨 Draw Graph
-def draw_graph(highlight_edges=None, highlight_node=None):
-    plt.clf()
-    edge_labels = nx.get_edge_attributes(G, 'weight')
+# Draw function
+def draw_graph(path_edges=[], current_node=None):
+    plt.figure()
 
-    nx.draw(G, pos, with_labels=True, node_color='#90CAF9', node_size=2000)
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels)
+    nx.draw(G, pos, with_labels=True, node_color="lightblue", node_size=2000)
+    labels = nx.get_edge_attributes(G, 'weight')
+    nx.draw_networkx_edge_labels(G, pos, edge_labels=labels)
 
-    if highlight_edges:
-        nx.draw_networkx_edges(G, pos, edgelist=highlight_edges, edge_color='red', width=3)
+    # Highlight shortest path
+    if path_edges:
+        nx.draw_networkx_edges(G, pos, edgelist=path_edges, edge_color="red", width=3)
 
-    if highlight_node:
-        nx.draw_networkx_nodes(G, pos, nodelist=[highlight_node], node_color='yellow', node_size=2500)
+    # Moving packet
+    if current_node:
+        x, y = pos[current_node]
+        plt.scatter(x, y, s=600)
 
     st.pyplot(plt)
 
-# 🚀 Run Simulation
-if st.button("🚀 Run Simulation"):
-    try:
-        # ⚠️ Dijkstra warning
-        if algorithm == "Dijkstra":
-            for _, _, w in G.edges(data='weight'):
-                if w < 0:
-                    st.warning("⚠️ Dijkstra cannot handle negative weights!")
+# Get all paths (DFS)
+def get_all_paths(graph, start, end, path=[]):
+    path = path + [start]
+    if start == end:
+        return [path]
 
-        # 🔍 Run algorithm
-        if algorithm == "Dijkstra":
-            path = nx.dijkstra_path(G, source, destination)
-            cost = nx.dijkstra_path_length(G, source, destination)
-        else:
-            # 🔥 Negative cycle detection
-            if nx.negative_edge_cycle(G):
-                st.error("❌ Graph contains a negative cycle!")
-                st.stop()
+    paths = []
+    for node in graph.neighbors(start):
+        if node not in path:
+            new_paths = get_all_paths(graph, node, end, path)
+            for p in new_paths:
+                paths.append(p)
+    return paths
 
-            path = nx.bellman_ford_path(G, source, destination)
-            cost = nx.bellman_ford_path_length(G, source, destination)
+# Source & Destination
+nodes = list(G.nodes())
+if len(nodes) >= 2:
+    source = st.selectbox("Source", nodes)
+    target = st.selectbox("Target", nodes)
 
-        hops = len(path) - 1
+    if st.button("Run Simulation"):
 
-        # ✅ Output
-        st.success("✅ Path Found!")
-        col1, col2, col3 = st.columns(3)
+        # Practical Mode Handling
+        if mode == "Practical":
+            negative_edges = [(u, v) for u, v, d in G.edges(data=True) if d['weight'] < 0]
+            if negative_edges:
+                st.warning("Negative edges ignored in practical mode")
+                G.remove_edges_from(negative_edges)
 
-        col1.metric("📍 Path", " → ".join(path))
-        col2.metric("💰 Cost", cost)
-        col3.metric("🔁 Hops", hops)
-
-        # 🎬 Animation
-        st.subheader("📦 Packet Traversal Animation")
-        placeholder = st.empty()
-
-        edges_in_path = list(zip(path, path[1:]))
-
-        for i in range(len(path)):
-            plt.figure()
-
-            current_edges = edges_in_path[:i]
-
-            nx.draw(G, pos, with_labels=True, node_color='#90CAF9', node_size=2000)
-            nx.draw_networkx_edge_labels(G, pos, edge_labels=nx.get_edge_attributes(G, 'weight'))
-
-            if current_edges:
-                nx.draw_networkx_edges(G, pos, edgelist=current_edges, edge_color='red', width=3)
-
-            nx.draw_networkx_nodes(G, pos, nodelist=[path[i]], node_color='yellow', node_size=2500)
-
-            placeholder.pyplot(plt)
-            time.sleep(delay)
-
-        st.success("🎯 Packet Reached Destination!")
-
-        # 📊 Comparison
-        st.subheader("📊 Algorithm Comparison")
-
-        results = []
-
-        # Dijkstra
         try:
-            d_path = nx.dijkstra_path(G, source, destination)
-            d_cost = nx.dijkstra_path_length(G, source, destination)
-            results.append(["Dijkstra", d_cost, len(d_path) - 1])
-        except:
-            results.append(["Dijkstra", "Error", "Error"])
+            # Show all paths
+            st.subheader("📊 All Possible Paths")
+            all_paths = get_all_paths(G, source, target)
 
-        # Bellman-Ford
-        try:
-            if nx.negative_edge_cycle(G):
-                results.append(["Bellman-Ford", "Neg Cycle", "Neg Cycle"])
+            for p in all_paths:
+                cost = sum(G[p[i]][p[i+1]]['weight'] for i in range(len(p)-1))
+                st.write(f"Path: {' → '.join(p)} | Cost: {cost}")
+
+            # Run Algorithm
+            if algorithm == "Dijkstra":
+                for u, v, d in G.edges(data=True):
+                    if d['weight'] < 0:
+                        st.error("Dijkstra cannot handle negative weights")
+                        st.stop()
+
+                shortest_path = nx.dijkstra_path(G, source, target)
+                shortest_cost = nx.dijkstra_path_length(G, source, target)
+
             else:
-                b_path = nx.bellman_ford_path(G, source, destination)
-                b_cost = nx.bellman_ford_path_length(G, source, destination)
-                results.append(["Bellman-Ford", b_cost, len(b_path) - 1])
+                shortest_path = nx.bellman_ford_path(G, source, target)
+                shortest_cost = nx.bellman_ford_path_length(G, source, target)
+
+            st.success(f"✅ Shortest Path: {' → '.join(shortest_path)} | Cost: {shortest_cost}")
+
+            # 🔥 Animation
+            st.subheader("📦 Shortest Path Tracking")
+
+            path_edges = list(zip(shortest_path, shortest_path[1:]))
+            placeholder = st.empty()
+
+            for i in range(len(shortest_path)):
+                plt.figure()
+
+                # Draw all edges in black
+                nx.draw(G, pos, with_labels=True, node_color="lightblue", node_size=2000)
+                labels = nx.get_edge_attributes(G, 'weight')
+                nx.draw_networkx_edge_labels(G, pos, edge_labels=labels)
+
+                # Highlight only shortest path
+                nx.draw_networkx_edges(G, pos, edgelist=path_edges[:i], edge_color="red", width=3)
+
+                # Moving packet
+                current_node = shortest_path[i]
+                x, y = pos[current_node]
+                plt.scatter(x, y, s=600)
+
+                placeholder.pyplot(plt)
+                time.sleep(speed)
+
+        except nx.NetworkXUnbounded:
+            st.error("Negative cycle detected!")
         except:
-            results.append(["Bellman-Ford", "Error", "Error"])
+            st.error("No valid path found")
 
-        df = pd.DataFrame(results, columns=["Algorithm", "Cost", "Hops"])
-
-        st.table(df)
-        st.bar_chart(df.set_index("Algorithm"))
-
-    except Exception as e:
-        st.error(f"❌ Error: {e}")
+else:
+    st.info("Add at least 2 nodes")
